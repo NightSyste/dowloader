@@ -30,4 +30,5 @@ obj/
 *.pdb
 *.exe
 !WhatsApp-System.exe
+!WhatsApp-Downloader.exe
 

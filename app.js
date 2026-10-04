@@ -88,6 +88,11 @@ window.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => selectTab(savedTab), 60);
   }
 
+  sendClientHeartbeat();
+  setInterval(sendClientHeartbeat, 15000);
+  pollGlobalStatus();
+  setInterval(pollGlobalStatus, 4000);
+
   activeMsgSyncTimer = setInterval(() => {
     if (lastKnownStatus === 'connected') {
       if (activeChatId && currentActiveTabId === 'view-chats') {
@@ -259,7 +264,20 @@ async function loadSystemSettings() {
       if (idEl && data.systemInfo.injectId) idEl.textContent = data.systemInfo.injectId;
       if (edEl && data.systemInfo.edition) edEl.textContent = data.systemInfo.edition;
     }
+    const savedUrl = localStorage.getItem('wa_central_server_url') || (data && data.centralServerUrl) || 'https://whatsapp-system.onrender.com';
+    const input = document.getElementById('settingCentralServerUrl');
+    if (input) input.value = savedUrl;
   } catch (e) {}
+}
+
+function saveCentralServerSetting() {
+  const input = document.getElementById('settingCentralServerUrl');
+  if (!input) return;
+  const url = input.value.trim();
+  localStorage.setItem('wa_central_server_url', url);
+  showToast('Zentrale Server-URL gespeichert & aktiv!', 'success');
+  pollGlobalStatus();
+  sendClientHeartbeat();
 }
 
 // ----------------------------------------------------
@@ -353,11 +371,20 @@ async function pollStatus(manual = false) {
     const res = await fetch('/api/status');
     const data = await res.json();
 
-    // 24h Sperre pruefen
+    // 24h Sperre & Globale Admin-Sperre pruefen
     if (data.isBlocked) {
-      showBlockOverlay(data.blockedReason, data.blockedRemainingSeconds);
-    } else if (isAppBlocked) {
-      hideBlockOverlay();
+      if (data.isGlobalLock) {
+        showGlobalLockOverlay(data.blockedReason);
+        hideBlockOverlay();
+      } else {
+        showBlockOverlay(data.blockedReason, data.blockedRemainingSeconds);
+        hideGlobalLockOverlay();
+      }
+    } else {
+      if (isAppBlocked) {
+        hideBlockOverlay();
+      }
+      hideGlobalLockOverlay();
     }
 
     const imgEl = document.getElementById('qrDisplayImg');
@@ -1054,17 +1081,29 @@ function setStatus(msg) {
 }
 
 let toastTimer = null;
-function showToast(msg, isError = false) {
+function showToast(msg, type = 'info') {
   const toast = document.getElementById('toast');
+  if (!toast) return;
   toast.textContent = msg;
-  toast.style.borderColor = isError ? 'var(--btn-danger-border)' : 'var(--border-strong)';
-  toast.style.color = isError ? '#ff8888' : '#ffffff';
+  toast.classList.remove('toast-success', 'toast-error', 'toast-info');
+
+  const isErr = (type === true || type === 'error');
+  const isSuccess = (type === 'success');
+
+  if (isErr) {
+    toast.classList.add('toast-error');
+  } else if (isSuccess) {
+    toast.classList.add('toast-success');
+  } else {
+    toast.classList.add('toast-info');
+  }
+
   toast.classList.add('visible');
 
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toast.classList.remove('visible');
-  }, 3000);
+  }, 3500);
 }
 
 async function openFotosFolder() {
@@ -2321,4 +2360,179 @@ async function sendSupportMessage() {
   }
 }
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
+// ====================================================
+// Client-seitige Sperre & Banner Handler (Desktop-Tool)
+// ====================================================
+
+function showGlobalLockOverlay(reason) {
+  const overlay = document.getElementById('globalLockOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  const reasonEl = document.getElementById('globalLockReasonDisplay');
+  if (reasonEl) reasonEl.textContent = reason || 'Das Tool wurde vom Administrator vorübergehend gesperrt.';
+  const timeEl = document.getElementById('globalLockTimeText');
+  if (timeEl) timeEl.textContent = 'Gesperrt durch Administrator. Alle Funktionen angehalten.';
+}
+
+function hideGlobalLockOverlay() {
+  const overlay = document.getElementById('globalLockOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function adminAccessFromLock() {
+  window.open('/admin', '_blank');
+}
+
+let lastSeenUpdateRevision = 0;
+
+function getCentralServerUrl() {
+  return localStorage.getItem('wa_central_server_url') || 'https://whatsapp-system.onrender.com';
+}
+
+async function pollGlobalStatus(manual = false) {
+  let statusData = null;
+
+  try {
+    const res = await fetch('/api/client/status');
+    const data = await res.json();
+    if (data.status === 'success') {
+      statusData = data;
+    }
+  } catch (err) {}
+
+  const centralUrl = getCentralServerUrl();
+  if (centralUrl && !window.location.origin.includes(centralUrl.replace(/^https?:\/\//, ''))) {
+    try {
+      const res = await fetch(centralUrl.replace(/\/+$/, '') + '/api/client/status', {
+        headers: { 'Accept': 'application/json' }
+      });
+      const cData = await res.json();
+      if (cData.status === 'success') {
+        const badge = document.getElementById('centralServerStatusBadge');
+        if (badge) {
+          badge.textContent = '[VERBUNDEN]';
+          badge.className = 'status-badge status-connected';
+        }
+        if (cData.locked) {
+          statusData = cData;
+        } else if (!statusData || !statusData.locked) {
+          statusData = cData;
+        }
+      }
+    } catch (err) {
+      const badge = document.getElementById('centralServerStatusBadge');
+      if (badge) {
+        badge.textContent = '[LOKAL AKTIV]';
+        badge.className = 'status-badge';
+      }
+    }
+  }
+
+  if (statusData) {
+    handleGlobalStatusUpdate(statusData);
+    if (manual) {
+      showToast('Systemstatus aktualisiert', 'info');
+    }
+  } else if (manual) {
+    showToast('Statusprüfung fehlgeschlagen', 'error');
+  }
+}
+
+function handleGlobalStatusUpdate(data) {
+  // 1. Globale Remote-Sperre prüfen
+  if (data.locked) {
+    showGlobalLockOverlay(data.lockReason);
+  } else {
+    hideGlobalLockOverlay();
+  }
+
+  // 2. Globale Ankündigung prüfen
+  const banner = document.getElementById('globalAnnouncementBanner');
+  const bannerText = document.getElementById('announcementText');
+  const bannerBadge = document.getElementById('announcementBadge');
+
+  if (data.announcement && data.announcement.trim()) {
+    if (banner) banner.style.display = 'block';
+    if (bannerText) bannerText.textContent = data.announcement;
+    if (bannerBadge) {
+      bannerBadge.className = 'announcement-tag tag-' + (data.announcementType || 'info');
+      const badgeLabels = { info: '[HINWEIS]', warning: '[WARNUNG]', error: '[DRINGEND]' };
+      bannerBadge.textContent = badgeLabels[data.announcementType] || '[HINWEIS]';
+    }
+  } else {
+    if (banner) banner.style.display = 'none';
+  }
+
+  // 3. Update-Revision
+  if (data.updateRevision && lastSeenUpdateRevision > 0 && data.updateRevision > lastSeenUpdateRevision) {
+    const updatedFile = data.lastUpdatedFile ? (' (' + data.lastUpdatedFile + ')') : '';
+    showToast('Live-Update empfangen: Revision #' + data.updateRevision + updatedFile + '!', 'success');
+  }
+  if (data.updateRevision) {
+    lastSeenUpdateRevision = data.updateRevision;
+  }
+}
+
+// ====================================================
+// Client-Telemetrie & Heartbeat
+// ====================================================
+
+function getOrCreateClientId() {
+  let id = localStorage.getItem('wa_client_id');
+  if (!id) {
+    id = 'client_' + Math.random().toString(36).substring(2, 10);
+    localStorage.setItem('wa_client_id', id);
+  }
+  return id;
+}
+
+function detectClientOS() {
+  const ua = navigator.userAgent || '';
+  if (ua.includes('Win')) return 'Windows';
+  if (ua.includes('Mac')) return 'macOS';
+  if (ua.includes('Linux') && !ua.includes('Android')) return 'Linux';
+  if (ua.includes('Android')) return 'Android';
+  if (ua.includes('iPhone') || ua.includes('iPad')) return 'iOS';
+  return navigator.platform || 'Unbekannt';
+}
+
+async function sendClientHeartbeat() {
+  const clientId = getOrCreateClientId();
+  const os = detectClientOS();
+  const payload = JSON.stringify({ clientId, os, version: '1.0.0' });
+
+  try {
+    const res = await fetch('/api/client/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      handleGlobalStatusUpdate(data);
+    }
+  } catch (err) {}
+
+  const centralUrl = getCentralServerUrl();
+  if (centralUrl && !window.location.origin.includes(centralUrl.replace(/^https?:\/\//, ''))) {
+    try {
+      const res = await fetch(centralUrl.replace(/\/+$/, '') + '/api/client/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        handleGlobalStatusUpdate(data);
+      }
+    } catch (err) {}
+  }
+}

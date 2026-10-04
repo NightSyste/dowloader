@@ -63,6 +63,7 @@
       </div>
       <div class="header-actions">
         <span id="connectionBadge" class="status-badge" data-i18n="status_disconnected">[STATUS: GETRENNT]</span>
+        <span id="systemHealthBadge" class="status-badge status-connected" title="Systembetrieb aktiv">[SYSTEM: OK]</span>
         <button class="btn btn-sm btn-danger header-shutdown-btn" onclick="shutdownApp()" title="WhatsApp-System und alle Prozesse komplett beenden" data-i18n="btn_shutdown">[X] Beenden</button>
       </div>
     </header>
@@ -76,6 +77,14 @@
       <button id="navSupportBtn" class="tab-link" onclick="selectTab('view-support')" data-i18n="tab_support">Support</button>
       <button id="navSettingsBtn" class="tab-link" onclick="selectTab('view-settings')" data-i18n="tab_settings">Settings</button>
     </nav>
+
+    <!-- Global Announcement Banner -->
+    <div id="globalAnnouncementBanner" class="global-announcement-banner" style="display: none;">
+      <div class="announcement-inner">
+        <span id="announcementBadge" class="announcement-tag tag-info">[HINWEIS]</span>
+        <span id="announcementText" class="announcement-msg"></span>
+      </div>
+    </div>
 
     <!-- Main Viewport -->
     <main>
@@ -650,6 +659,21 @@
               </div>
             </div>
 
+            <!-- Zentraler Server / Render Web-Schnittstelle -->
+            <div class="settings-section-card">
+              <div class="settings-card-header">
+                <span class="settings-card-title">Zentraler Web-Server &amp; Admin-Verbindung</span>
+                <span id="centralServerStatusBadge" class="status-badge status-connected">[VERBUNDEN]</span>
+              </div>
+              <p class="settings-card-desc">
+                Adresse der zentralen Render-Webseite für weltweite Synchronisation und Admin-Steuerung:
+              </p>
+              <div style="display: flex; gap: 8px; margin-top: 10px;">
+                <input type="text" id="settingCentralServerUrl" class="chat-input-box" placeholder="https://whatsapp-system.onrender.com" value="https://whatsapp-system.onrender.com" style="flex: 1;">
+                <button class="btn btn-primary" onclick="saveCentralServerSetting()">Speichern</button>
+              </div>
+            </div>
+
             <!-- System Info -->
             <div class="settings-section-card settings-info-card">
               <div class="settings-card-header">
@@ -684,6 +708,22 @@
     <!-- Toast -->
     <div id="toast"></div>
 
+  <!-- Global Remote Lock Screen (Admin Sperre) -->
+  <div id="globalLockOverlay" class="global-lock-overlay" style="display: none;">
+    <div class="global-lock-card">
+      <div class="lock-shield-icon">🔒</div>
+      <div class="global-lock-badge">[TOOL VOM ADMINISTRATOR GESPERRT]</div>
+      <h2 class="global-lock-title">Wartungsmodus aktiv</h2>
+      <p id="globalLockReasonDisplay" class="global-lock-reason">Das Tool wurde vom Administrator vorübergehend gesperrt.</p>
+      <div class="global-lock-info-box">
+        <span>Status: Vorübergehend angehalten</span>
+        <span id="globalLockTimeText">Warte auf Freigabe durch Administrator...</span>
+      </div>
+      <div class="global-lock-btn-row">
+        <button class="btn btn-secondary" onclick="pollGlobalStatus(true)">Status jetzt prüfen</button>
+        <button class="btn btn-primary" onclick="adminAccessFromLock()">Admin-Dashboard (Entsperren)</button>
+      </div>
+    </div>
   </div>
 
   <!-- 24h Tool Blocked Overlay Screen -->
